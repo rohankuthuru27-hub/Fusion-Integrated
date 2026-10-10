@@ -1,18 +1,23 @@
-from fusion.registry import Module, SidebarItem, Permission, RoleGrant
-
-module = Module(name='elm', title='Employee Leave Management')
-
-sidebar_items = [
-    SidebarItem(name='my_leave', title='My Leave', url='/my-leave'),
-    SidebarItem(name='leave_tasks', title='Leave Tasks', url='/leave-tasks')
+MODULE = {
+    "code": "elm", "label": "Employee Leave Management", "icon": "CalendarCheck",
+    "base_path": "/elm", "nav_section": "Employee Services", "sort_order": 20,
+    "status": "active",
+}
+NAV_ITEMS = [
+    {"code": "elm.mine", "label": "My Leave", "icon": "CalendarCheck", "to": "/elm/mine",
+     "required_permission": "elm.leave.view_self", "sort_order": 10},
+    {"code": "elm.tasks", "label": "Leave Tasks", "icon": "ListChecks", "to": "/elm/tasks",
+     "required_permission": "elm.leave.review", "sort_order": 20},
 ]
-
-permissions = [
-    Permission(name='view_my_leave', title='View My Leave'),
-    Permission(name='manage_leave_tasks', title='Manage Leave Tasks')
+PERMISSIONS = [
+    ("elm.leave.view_self", "View own leave balances and requests"),
+    ("elm.leave.apply", "Apply for leave"),
+    ("elm.leave.review", "Review assigned leave requests"),
+    ("elm.policy.manage", "Maintain leave policy and calendars"),
 ]
-
-role_grants = [
-    RoleGrant(role='manager', permissions=['view_my_leave', 'manage_leave_tasks']),
-    RoleGrant(role='employee', permissions=['view_my_leave'])
-]
+ROLE_GRANTS = {
+    "faculty": ["elm.leave.view_self", "elm.leave.apply"],
+    "staff": ["elm.leave.view_self", "elm.leave.apply"],
+    "Unit Head": ["elm.leave.view_self", "elm.leave.apply", "elm.leave.review"],
+    "Leave Administrator": ["elm.leave.view_self", "elm.leave.review", "elm.policy.manage"],
+}
