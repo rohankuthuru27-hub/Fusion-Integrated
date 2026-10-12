@@ -347,3 +347,161 @@ def execute_year_end_processing(*, user_id: int, year: int) -> dict[str, Decimal
         "carried_forward_el": new_el_bal,
     }
 
+
+@transaction.atomic
+def submit_resumption_of_duty(
+    *,
+    user_id: int,
+    request_id: int,
+    actual_resumption_date: date,
+    details: str = "",
+) -> LeaveRequest:
+    """CFR-EL-021 & EL-UC-010 / CW-EL-04: Submit Resumption of Duty."""
+    leave_request = LeaveRequest.objects.filter(id=request_id, user_id=user_id).first()
+    if not leave_request:
+        raise NotFoundError("Leave request not found or not owned by user.")
+
+    if leave_request.status != "sanctioned":
+        raise DomainError("Resumption can only be submitted for sanctioned leave.")
+
+    leave_request.resumption_date = actual_resumption_date
+    leave_request.resumption_status = "pending"
+    leave_request.save()
+
+    LeaveActionHistory.objects.create(
+        leave_request=leave_request,
+        actor_id=user_id,
+        action="resumption_submitted",
+        comments=f"Actual resumption on {actual_resumption_date}. {details}".strip(),
+    )
+
+    return leave_request
+
+
+@transaction.atomic
+def review_resumption(
+    *,
+    reviewer_id: int,
+    request_id: int,
+    review_remarks: str = "",
+    closed_dates: set[date] | None = None,
+) -> LeaveRequest:
+    """CFR-EL-021 & EL-UC-011, BR-EL-027, BR-EL-028: Normal, early, and late resumption outcome."""
+    leave_request = LeaveRequest.objects.filter(id=request_id).first()
+    if not leave_request or leave_request.resumption_status != "pending":
+        raise NotFoundError("Leave request not found or has no pending resumption.")
+
+    actual_resumption = leave_request.resumption_date
+    expected_resumption = leave_request.end_date + timezone.timedelta(days=1)
+
+    if actual_resumption < expected_resumption:
+        # Early resumption: actual leave ended earlier than expected
+        actual_end_date = actual_resumption - timezone.timedelta(days=1)
+        if actual_end_date >= leave_request.start_date:
+            actual_days = count_leave_days(
+                leave_request.category,
+                leave_request.start_date,
+                actual_end_date,
+                half_day=leave_request.half_day,
+                closed_dates=closed_dates,
+            )
+            days_saved = leave_request.leave_days - actual_days
+            if days_saved > 0:
+                # Restore balance for unused days
+                balance_obj = LeaveBalance.objects.get(
+                    user_id=leave_request.user_id,
+                    category=leave_request.category,
+                    year=leave_request.start_date.year,
+                )
+                balance_obj.balance += days_saved
+                balance_obj.availed -= days_saved
+                balance_obj.save()
+                leave_request.leave_days = actual_days
+                leave_request.end_date = actual_end_date
+
+    elif actual_resumption > expected_resumption:
+        # Late resumption: actual leave extended beyond expected
+        actual_end_date = actual_resumption - timezone.timedelta(days=1)
+        actual_days = count_leave_days(
+            leave_request.category,
+            leave_request.start_date,
+            actual_end_date,
+            half_day=leave_request.half_day,
+            closed_dates=closed_dates,
+        )
+        excess_days = actual_days - leave_request.leave_days
+        if excess_days > 0:
+            balance_obj = LeaveBalance.objects.get(
+                user_id=leave_request.user_id,
+                category=leave_request.category,
+                year=leave_request.start_date.year,
+            )
+            balance_obj.balance -= excess_days
+            balance_obj.availed += excess_days
+            balance_obj.save()
+            leave_request.leave_days = actual_days
+            leave_request.end_date = actual_end_date
+
+    leave_request.resumption_status = "completed"
+    leave_request.save()
+
+    LeaveActionHistory.objects.create(
+        leave_request=leave_request,
+        actor_id=reviewer_id,
+        action="resumption_reviewed",
+        comments=review_remarks or "Resumption verified and leave adjusted.",
+    )
+
+    return leave_request
+
+
+@transaction.atomic
+def record_offline_sanctioned_leave(
+    *,
+    admin_id: int,
+    user_id: int,
+    category: str,
+    start_date: date,
+    end_date: date,
+    purpose: str,
+    sanction_reference: str,
+    closed_dates: set[date] | None = None,
+) -> LeaveRequest:
+    """CFR-EL-027, EL-UC-016 & BR-EL-029: Record already-sanctioned offline leave."""
+    leave_days = count_leave_days(category, start_date, end_date, closed_dates=closed_dates)
+
+    balance_obj = LeaveBalance.objects.filter(
+        user_id=user_id,
+        category=category,
+        year=start_date.year,
+    ).first()
+    if not balance_obj:
+        raise NotFoundError("Leave balance not found for this user.")
+
+    # Deduct balance immediately
+    balance_obj.balance -= leave_days
+    balance_obj.availed += leave_days
+    balance_obj.save()
+
+    req = LeaveRequest.objects.create(
+        user_id=user_id,
+        category=category,
+        start_date=start_date,
+        end_date=end_date,
+        leave_days=leave_days,
+        purpose=purpose,
+        status="sanctioned",
+        is_offline_recorded=True,
+        offline_reference=sanction_reference,
+    )
+
+    LeaveActionHistory.objects.create(
+        leave_request=req,
+        actor_id=admin_id,
+        action="offline_recorded",
+        comments=f"Offline sanctioned leave recorded. Ref: {sanction_reference}",
+    )
+
+    return req
+
+

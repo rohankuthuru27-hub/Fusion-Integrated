@@ -22,6 +22,11 @@ from modules.elm.services.leave import (
     review_leave_request,
     withdraw_leave_request,
     cancel_approved_leave,
+    extend_leave,
+    execute_year_end_processing,
+    submit_resumption_of_duty,
+    review_resumption,
+    record_offline_sanctioned_leave,
 )
 
 
@@ -208,4 +213,62 @@ class YearEndProcessingView(APIView):
         year = int(request.data.get("year", timezone.now().year))
         res = execute_year_end_processing(user_id=int(target_user_id), year=year)
         return Response({key: str(val) for key, val in res.items()})
+
+
+class SubmitResumptionView(APIView):
+    """CFR-EL-021 & EL-UC-010: Submit Resumption of Duty."""
+    permission_classes = [HasModuleGrant("elm"), HasPermission("elm.leave.apply")]
+
+    def post(self, request, pk: int):
+        date_str = request.data.get("resumption_date")
+        if not date_str:
+            return Response({"detail": "resumption_date is required"}, status=status.HTTP_400_BAD_REQUEST)
+        resumption_date = date.fromisoformat(date_str)
+        details = request.data.get("details", "")
+        leave_req = submit_resumption_of_duty(
+            user_id=request.principal.user_id,
+            request_id=pk,
+            actual_resumption_date=resumption_date,
+            details=details,
+        )
+        return Response(LeaveRequestSerializer(leave_req).data)
+
+
+class ReviewResumptionView(APIView):
+    """CFR-EL-021 & EL-UC-011: Review Resumption and adjust days."""
+    permission_classes = [HasModuleGrant("elm"), HasPermission("elm.leave.review")]
+
+    def post(self, request, pk: int):
+        remarks = request.data.get("remarks", "")
+        leave_req = review_resumption(
+            reviewer_id=request.principal.user_id,
+            request_id=pk,
+            review_remarks=remarks,
+        )
+        return Response(LeaveRequestSerializer(leave_req).data)
+
+
+class RecordOfflineLeaveView(APIView):
+    """CFR-EL-027 & EL-UC-016: Record already sanctioned offline leave."""
+    permission_classes = [HasModuleGrant("elm"), HasPermission("elm.policy.manage")]
+
+    def post(self, request):
+        user_id = int(request.data["user_id"])
+        category = request.data["category"]
+        start_date = date.fromisoformat(request.data["start_date"])
+        end_date = date.fromisoformat(request.data["end_date"])
+        purpose = request.data.get("purpose", "Offline approved leave")
+        sanction_ref = request.data.get("sanction_reference", "OFFLINE-RECORD")
+
+        leave_req = record_offline_sanctioned_leave(
+            admin_id=request.principal.user_id,
+            user_id=user_id,
+            category=category,
+            start_date=start_date,
+            end_date=end_date,
+            purpose=purpose,
+            sanction_reference=sanction_ref,
+        )
+        return Response(LeaveRequestSerializer(leave_req).data, status=status.HTTP_201_CREATED)
+
 

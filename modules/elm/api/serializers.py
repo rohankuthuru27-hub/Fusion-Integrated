@@ -70,6 +70,10 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
             'substitute_id',
             'current_reviewer_id',
             'rejection_reason',
+            'resumption_date',
+            'resumption_status',
+            'is_offline_recorded',
+            'offline_reference',
             'created_at',
             'updated_at',
             'substitute_assignments',
@@ -81,11 +85,14 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
             'leave_days',
             'status',
             'rejection_reason',
+            'resumption_status',
+            'is_offline_recorded',
             'created_at',
             'updated_at',
             'substitute_assignments',
             'actions',
         ]
+
 
 class ApplyLeaveInputSerializer(serializers.Serializer):
     category = serializers.CharField(max_length=10)

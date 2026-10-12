@@ -12,6 +12,9 @@ from modules.elm.services.leave import (
     cancel_approved_leave,
     extend_leave,
     execute_year_end_processing,
+    submit_resumption_of_duty,
+    review_resumption,
+    record_offline_sanctioned_leave,
 )
 
 @pytest.fixture
@@ -170,4 +173,58 @@ def test_year_end_processing():
     assert el_2027.balance == Decimal("60.00") # 30 carried forward + 30 annual grant
     vl_2027 = LeaveBalance.objects.get(user_id=101, category="VL", year=2027)
     assert vl_2027.balance == Decimal("60.00") # Fresh 60 VL granted, unused 2026 VL zeroed
+
+@pytest.mark.django_db
+def test_resumption_submission_and_early_adjustment():
+    balance = LeaveBalance.objects.create(
+        user_id=101, category="EL", year=2026,
+        credited=Decimal("30.00"), availed=Decimal("5.00"), balance=Decimal("25.00")
+    )
+    req = LeaveRequest.objects.create(
+        user_id=101, category="EL", start_date=date(2026, 11, 2),
+        end_date=date(2026, 11, 6), leave_days=Decimal("5.00"),
+        purpose="Out of town vacation", status="sanctioned"
+    )
+    # Employee reports resumption earlier on 2026-11-05 (only 3 days availed instead of 5)
+    submit_resumption_of_duty(user_id=101, request_id=req.id, actual_resumption_date=date(2026, 11, 5))
+    req.refresh_from_db()
+    assert req.resumption_status == "pending"
+    assert req.resumption_date == date(2026, 11, 5)
+
+    # Unit head verifies and approves early resumption
+    review_resumption(reviewer_id=200, request_id=req.id, review_remarks="Early resumption verified")
+    req.refresh_from_db()
+    assert req.resumption_status == "completed"
+    assert req.end_date == date(2026, 11, 4)
+    assert req.leave_days == Decimal("3.00")
+
+    # Check that 2 unused days were credited back
+    balance.refresh_from_db()
+    assert balance.balance == Decimal("27.00")
+    assert balance.availed == Decimal("3.00")
+
+@pytest.mark.django_db
+def test_record_offline_sanctioned_leave():
+    balance = LeaveBalance.objects.create(
+        user_id=101, category="CL", year=2026,
+        credited=Decimal("8.00"), availed=Decimal("0.00"), balance=Decimal("8.00")
+    )
+    req = record_offline_sanctioned_leave(
+        admin_id=999,
+        user_id=101,
+        category="CL",
+        start_date=date(2026, 11, 10),
+        end_date=date(2026, 11, 10),
+        sanction_reference="ORDER/DIR/2026/89",
+        purpose="Medical emergency approved offline by Director"
+    )
+    assert req.status == "sanctioned"
+    assert req.is_offline_recorded is True
+    assert req.offline_reference == "ORDER/DIR/2026/89"
+    assert req.leave_days == Decimal("1.00")
+
+    # Balance deducted directly
+    balance.refresh_from_db()
+    assert balance.balance == Decimal("7.00")
+    assert balance.availed == Decimal("1.00")
 

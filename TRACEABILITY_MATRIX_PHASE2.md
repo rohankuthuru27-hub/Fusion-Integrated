@@ -32,17 +32,23 @@ This matrix cross-references the official **32 Consolidated Functional Requireme
 | **CFR-EL-017** | No post-submission in-place modification | EL-UC-007, EL-UC-001 | BR-EL-034 | `modules/elm/api/views.py`<br>`modules/elm/api/serializers.py` | Verified (No update PUT/PATCH on submitted requests) |
 | **CFR-EL-018** | Immediate withdrawal of pending request | EL-UC-007 | BR-EL-022 | `modules/elm/services/leave.py`<br>`modules/elm/api/views.py` | `test_services.py::test_withdraw_pending_request`<br>`test_api.py::test_api_apply_and_withdraw_leave` |
 | **CFR-EL-019** | Cancel approved leave before start & restore balance | EL-UC-008, EL-UC-003 | BR-EL-016–019, BR-EL-023 | `modules/elm/services/leave.py`<br>`modules/elm/api/views.py` | `test_services.py::test_cancel_approved_leave_restores_balance` |
+| **CFR-EL-020** | Extend ongoing sanctioned EL/COL/VL leave | EL-UC-009, CW-EL-03 | BR-EL-025 | `modules/elm/services/leave.py`<br>`modules/elm/api/views.py` | `test_services.py::test_extend_sanctioned_leave`<br>`test_api.py::test_api_extend_and_print` |
+| **CFR-EL-021** | Resumption of Duty reporting & balance adjustment | EL-UC-010, EL-UC-011, CW-EL-04 | BR-EL-027, BR-EL-028 | `modules/elm/services/leave.py`<br>`modules/elm/api/views.py` | `test_services.py::test_resumption_submission_and_early_adjustment`<br>`test_api.py::test_api_resumption_workflow` |
 | **CFR-EL-022** | View leave balances and request history | EL-UC-012 | BR-EL-036 | `modules/elm/api/views.py`<br>`client/.../LeavePage.tsx` | `test_api.py::test_api_leave_balances` |
+| **CFR-EL-023** | Exportable & printable sanctioned leave application | EL-UC-013 | BR-EL-024 | `modules/elm/api/views.py`<br>`modules/elm/api/urls.py` | `test_api.py::test_api_extend_and_print` |
+| **CFR-EL-027** | Record offline sanctioned leave directly | EL-UC-016 | BR-EL-029 | `modules/elm/services/leave.py`<br>`modules/elm/api/views.py` | `test_services.py::test_record_offline_sanctioned_leave`<br>`test_api.py::test_api_offline_record` |
+| **CFR-EL-028** | Year-end processing & VL-to-EL conversion | EL-UC-020 | BR-EL-007, BR-EL-008 | `modules/elm/services/leave.py`<br>`modules/elm/domain/rules.py` | `test_services.py::test_year_end_processing`<br>`test_rules.py::test_calculate_vl_to_el_conversion` |
+| **CFR-EL-032** | Station Leave Declaration & Details | EL-UC-001 | BR-EL-013 | `modules/elm/models.py`<br>`modules/elm/domain/rules.py` | `test_rules.py::test_station_leave_validation` |
 
 ---
 
 ## 2. Test Execution & Verification Evidence
-All 17 tests passed with 100% success rate:
+All 25 tests in `modules/elm/tests/` passed with 100% success rate:
 ```powershell
 uv run pytest modules/elm/tests/
 ```
 Output:
 ```text
-.................                                                        [100%]
-17 passed in 0.50s
+.........................                                                [100%]
+25 passed in 0.57s
 ```

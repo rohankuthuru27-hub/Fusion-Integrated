@@ -13,6 +13,9 @@ from modules.elm.api.views import (
     ExtendLeaveView,
     PrintableLeaveView,
     YearEndProcessingView,
+    SubmitResumptionView,
+    ReviewResumptionView,
+    RecordOfflineLeaveView,
 )
 
 urlpatterns = [
@@ -28,6 +31,10 @@ urlpatterns = [
     path("tasks/review/<int:pk>/decision", ReviewDecisionView.as_view(), name="elm-review-decision"),
     path("requests/<int:pk>/extend", ExtendLeaveView.as_view(), name="elm-request-extend"),
     path("requests/<int:pk>/print", PrintableLeaveView.as_view(), name="elm-request-print"),
+    path("requests/<int:pk>/resumption", SubmitResumptionView.as_view(), name="elm-request-resumption"),
+    path("tasks/resumption/<int:pk>/review", ReviewResumptionView.as_view(), name="elm-resumption-review"),
     path("processing/year-end", YearEndProcessingView.as_view(), name="elm-year-end-processing"),
+    path("admin/offline-record", RecordOfflineLeaveView.as_view(), name="elm-offline-record"),
 ]
+
 

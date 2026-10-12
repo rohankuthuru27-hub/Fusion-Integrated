@@ -38,6 +38,10 @@ class LeaveRequest(TimeStampedModel, UserScopedModel):
     substitute_id = models.IntegerField(null=True, blank=True)
     current_reviewer_id = models.IntegerField(null=True, blank=True)
     rejection_reason = models.TextField(blank=True)
+    resumption_date = models.DateField(null=True, blank=True)
+    resumption_status = models.CharField(max_length=20, default='none', choices=[('none', 'None'), ('pending', 'Pending Review'), ('completed', 'Completed')])
+    is_offline_recorded = models.BooleanField(default=False)
+    offline_reference = models.CharField(max_length=100, blank=True)
 
     class Meta:
         db_table = 'elm_leave_request'
