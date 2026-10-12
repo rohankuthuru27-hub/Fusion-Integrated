@@ -224,3 +224,126 @@ def cancel_approved_leave(*, user_id: int, request_id: int, today_date: date) ->
     )
 
     return leave_request
+
+
+@transaction.atomic
+def extend_leave(
+    *,
+    user_id: int,
+    request_id: int,
+    new_end_date: date,
+    reason: str = "",
+    closed_dates: set[date] | None = None,
+) -> LeaveRequest:
+    """CFR-EL-020 & BR-EL-025: Extend ongoing EL/COL/VL posting incremental days."""
+    leave_request = LeaveRequest.objects.filter(id=request_id, user_id=user_id).first()
+    if not leave_request:
+        raise NotFoundError("Leave request not found or not owned by user.")
+
+    if leave_request.status != "sanctioned":
+        raise DomainError("Only sanctioned leave may be extended.")
+
+    if leave_request.category not in ["EL", "COL", "VL"]:
+        raise DomainError("Extensions only permitted for ongoing EL, COL, or VL.")
+
+    if new_end_date <= leave_request.end_date:
+        raise DomainError("Extension new end date must be after original end date.")
+
+    # Calculate incremental days
+    inc_start = leave_request.end_date + timezone.timedelta(days=1)
+    incremental_days = count_leave_days(
+        leave_request.category,
+        inc_start,
+        new_end_date,
+        closed_dates=closed_dates,
+    )
+
+    balance_obj = LeaveBalance.objects.get(
+        user_id=user_id,
+        category=leave_request.category,
+        year=leave_request.start_date.year,
+    )
+    if balance_obj.balance < incremental_days:
+        raise DomainError(f"Insufficient balance for extension: needed {incremental_days}, have {balance_obj.balance}.")
+
+    # Deduct incremental balance and update leave
+    balance_obj.balance -= incremental_days
+    balance_obj.availed += incremental_days
+    balance_obj.save()
+
+    leave_request.end_date = new_end_date
+    leave_request.leave_days += incremental_days
+    leave_request.save()
+
+    LeaveActionHistory.objects.create(
+        leave_request=leave_request,
+        actor_id=user_id,
+        action="extended",
+        comments=f"Extended to {new_end_date} (+{incremental_days} days). {reason}".strip(),
+    )
+
+    return leave_request
+
+
+@transaction.atomic
+def execute_year_end_processing(*, user_id: int, year: int) -> dict[str, Decimal]:
+    """CFR-EL-028 & BR-EL-007, BR-EL-008: Year-end processing and VL-to-EL conversion."""
+    from modules.elm.domain.rules import calculate_vl_to_el_conversion, ENTITLEMENTS
+
+    vl_balance = LeaveBalance.objects.filter(user_id=user_id, category="VL", year=year).first()
+    el_balance = LeaveBalance.objects.filter(user_id=user_id, category="EL", year=year).first()
+
+    unutilized_vl = vl_balance.balance if vl_balance else Decimal("0.00")
+    current_el = el_balance.balance if el_balance else Decimal("0.00")
+
+    credited_el, forfeited_vl, new_el_bal = calculate_vl_to_el_conversion(
+        unutilized_vl=unutilized_vl,
+        current_el=current_el,
+    )
+
+    # Next year balances
+    next_year = year + 1
+
+    # Carry forward EL (with credited converted VL) + new annual grant
+    LeaveBalance.objects.update_or_create(
+        user_id=user_id,
+        category="EL",
+        year=next_year,
+        defaults={
+            "credited": new_el_bal + ENTITLEMENTS["EL"],
+            "availed": Decimal("0.00"),
+            "balance": new_el_bal + ENTITLEMENTS["EL"],
+        },
+    )
+
+    # Reset fresh VL for next year (VL itself never carries forward as VL)
+    LeaveBalance.objects.update_or_create(
+        user_id=user_id,
+        category="VL",
+        year=next_year,
+        defaults={
+            "credited": ENTITLEMENTS["VL"],
+            "availed": Decimal("0.00"),
+            "balance": ENTITLEMENTS["VL"],
+        },
+    )
+
+    # CL and RH lapse at year end, fresh entitlement created
+    for cat in ["CL", "RH"]:
+        LeaveBalance.objects.update_or_create(
+            user_id=user_id,
+            category=cat,
+            year=next_year,
+            defaults={
+                "credited": ENTITLEMENTS[cat],
+                "availed": Decimal("0.00"),
+                "balance": ENTITLEMENTS[cat],
+            },
+        )
+
+    return {
+        "credited_el_from_vl": credited_el,
+        "forfeited_vl": forfeited_vl,
+        "carried_forward_el": new_el_bal,
+    }
+

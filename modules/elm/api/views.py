@@ -151,3 +151,61 @@ class ReviewDecisionView(APIView):
             reason=serializer.validated_data.get("reason", ""),
         )
         return Response(LeaveRequestSerializer(leave_req).data)
+
+
+class ExtendLeaveView(APIView):
+    permission_classes = [HasModuleGrant("elm"), HasPermission("elm.leave.apply")]
+
+    def post(self, request, pk: int):
+        new_end_date_str = request.data.get("new_end_date")
+        if not new_end_date_str:
+            return Response({"detail": "new_end_date is required"}, status=status.HTTP_400_BAD_REQUEST)
+        new_end_date = date.fromisoformat(new_end_date_str)
+        reason = request.data.get("reason", "")
+        leave_req = extend_leave(
+            user_id=request.principal.user_id,
+            request_id=pk,
+            new_end_date=new_end_date,
+            reason=reason,
+        )
+        return Response(LeaveRequestSerializer(leave_req).data)
+
+
+class PrintableLeaveView(APIView):
+    """CFR-EL-023: Exportable/printable leave application data."""
+    permission_classes = [HasModuleGrant("elm"), HasPermission("elm.leave.view_self")]
+
+    def get(self, request, pk: int):
+        leave_req = LeaveRequest.objects.filter(id=pk, user_id=request.principal.user_id).first()
+        if not leave_req:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        history = list(leave_req.actions.values("actor_id", "action", "comments", "created_at"))
+        return Response({
+            "application_id": leave_req.id,
+            "applicant_id": leave_req.user_id,
+            "category": leave_req.category,
+            "period": f"{leave_req.start_date} to {leave_req.end_date}",
+            "leave_days": str(leave_req.leave_days),
+            "status": leave_req.status,
+            "purpose": leave_req.purpose,
+            "station_leave": {
+                "required": leave_req.is_station_leave,
+                "destination": leave_req.destination,
+                "emergency_contact": leave_req.emergency_contact,
+            },
+            "substitute_id": leave_req.substitute_id,
+            "audit_trail": history,
+            "generated_at": timezone.now().isoformat(),
+        })
+
+
+class YearEndProcessingView(APIView):
+    """CFR-EL-028: Administrative Year-end leave processing."""
+    permission_classes = [HasModuleGrant("elm"), HasPermission("elm.policy.manage")]
+
+    def post(self, request):
+        target_user_id = request.data.get("user_id", request.principal.user_id)
+        year = int(request.data.get("year", timezone.now().year))
+        res = execute_year_end_processing(user_id=int(target_user_id), year=year)
+        return Response({key: str(val) for key, val in res.items()})
+

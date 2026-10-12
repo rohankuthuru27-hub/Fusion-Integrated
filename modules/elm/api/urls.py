@@ -10,6 +10,9 @@ from modules.elm.api.views import (
     RespondSubstituteView,
     ReviewTasksView,
     ReviewDecisionView,
+    ExtendLeaveView,
+    PrintableLeaveView,
+    YearEndProcessingView,
 )
 
 urlpatterns = [
@@ -23,4 +26,8 @@ urlpatterns = [
     path("tasks/substitute/<int:pk>/respond", RespondSubstituteView.as_view(), name="elm-substitute-respond"),
     path("tasks/review", ReviewTasksView.as_view(), name="elm-review-tasks"),
     path("tasks/review/<int:pk>/decision", ReviewDecisionView.as_view(), name="elm-review-decision"),
+    path("requests/<int:pk>/extend", ExtendLeaveView.as_view(), name="elm-request-extend"),
+    path("requests/<int:pk>/print", PrintableLeaveView.as_view(), name="elm-request-print"),
+    path("processing/year-end", YearEndProcessingView.as_view(), name="elm-year-end-processing"),
 ]
+

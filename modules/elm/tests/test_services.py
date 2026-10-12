@@ -10,6 +10,8 @@ from modules.elm.services.leave import (
     review_leave_request,
     withdraw_leave_request,
     cancel_approved_leave,
+    extend_leave,
+    execute_year_end_processing,
 )
 
 @pytest.fixture
@@ -129,3 +131,43 @@ def test_cancel_approved_leave_restores_balance(applicant_balance):
     applicant_balance.refresh_from_db()
     assert applicant_balance.balance == Decimal("8.00")
     assert applicant_balance.availed == Decimal("0.00")
+
+@pytest.mark.django_db
+def test_extend_sanctioned_leave():
+    el_balance = LeaveBalance.objects.create(
+        user_id=101, category="EL", year=2026,
+        credited=Decimal("30.00"), availed=Decimal("5.00"), balance=Decimal("25.00")
+    )
+    req = LeaveRequest.objects.create(
+        user_id=101, category="EL", start_date=date(2026, 11, 1),
+        end_date=date(2026, 11, 5), leave_days=Decimal("5.00"),
+        purpose="Annual leave", status="sanctioned"
+    )
+    extended = extend_leave(user_id=101, request_id=req.id, new_end_date=date(2026, 11, 7))
+    assert extended.end_date == date(2026, 11, 7)
+    assert extended.leave_days == Decimal("7.00")
+    el_balance.refresh_from_db()
+    assert el_balance.balance == Decimal("23.00")
+    assert el_balance.availed == Decimal("7.00")
+
+@pytest.mark.django_db
+def test_year_end_processing():
+    # 20 unutilized VL converts to 10 EL and carried forward
+    LeaveBalance.objects.create(
+        user_id=101, category="VL", year=2026,
+        credited=Decimal("60.00"), availed=Decimal("40.00"), balance=Decimal("20.00")
+    )
+    LeaveBalance.objects.create(
+        user_id=101, category="EL", year=2026,
+        credited=Decimal("30.00"), availed=Decimal("10.00"), balance=Decimal("20.00")
+    )
+    res = execute_year_end_processing(user_id=101, year=2026)
+    assert res["credited_el_from_vl"] == Decimal("10.00")
+    assert res["carried_forward_el"] == Decimal("30.00")
+
+    # Verify next year's balances (2027)
+    el_2027 = LeaveBalance.objects.get(user_id=101, category="EL", year=2027)
+    assert el_2027.balance == Decimal("60.00") # 30 carried forward + 30 annual grant
+    vl_2027 = LeaveBalance.objects.get(user_id=101, category="VL", year=2027)
+    assert vl_2027.balance == Decimal("60.00") # Fresh 60 VL granted, unused 2026 VL zeroed
+
