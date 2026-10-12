@@ -1,0 +1,131 @@
+from datetime import date
+from decimal import Decimal
+import pytest
+
+from core.api.exceptions import ConflictError, DomainError
+from modules.elm.models import LeaveBalance, LeaveRequest, SubstituteAssignment
+from modules.elm.services.leave import (
+    apply_for_leave,
+    respond_substitute,
+    review_leave_request,
+    withdraw_leave_request,
+    cancel_approved_leave,
+)
+
+@pytest.fixture
+def applicant_balance(db):
+    return LeaveBalance.objects.create(
+        user_id=101,
+        category="CL",
+        year=2026,
+        credited=Decimal("8.00"),
+        availed=Decimal("0.00"),
+        balance=Decimal("8.00"),
+    )
+
+@pytest.mark.django_db
+def test_apply_for_leave_with_substitute(applicant_balance):
+    req = apply_for_leave(
+        user_id=101,
+        category="CL",
+        start_date=date(2026, 11, 2),
+        end_date=date(2026, 11, 2),
+        half_day="first",
+        purpose="Personal errand",
+        substitute_id=102,
+    )
+    assert req.status == "awaiting_substitute"
+    assert req.leave_days == Decimal("0.5")
+    assert SubstituteAssignment.objects.filter(leave_request=req, substitute_id=102, status="pending").exists()
+
+@pytest.mark.django_db
+def test_apply_for_leave_insufficient_balance(applicant_balance):
+    applicant_balance.balance = Decimal("0.00")
+    applicant_balance.save()
+    with pytest.raises(DomainError, match="Insufficient balance"):
+        apply_for_leave(
+            user_id=101,
+            category="CL",
+            start_date=date(2026, 11, 2),
+            end_date=date(2026, 11, 3),
+            purpose="Doctor visit",
+        )
+
+@pytest.mark.django_db
+def test_apply_for_leave_overlap_conflict(applicant_balance):
+    apply_for_leave(
+        user_id=101,
+        category="CL",
+        start_date=date(2026, 11, 5),
+        end_date=date(2026, 11, 6),
+        purpose="Family visit",
+    )
+    with pytest.raises(ConflictError, match="overlaps with an existing leave request"):
+        apply_for_leave(
+            user_id=101,
+            category="CL",
+            start_date=date(2026, 11, 6),
+            end_date=date(2026, 11, 7),
+            purpose="Another trip",
+        )
+
+@pytest.mark.django_db
+def test_substitute_respond_and_unit_head_approval(applicant_balance):
+    req = apply_for_leave(
+        user_id=101,
+        category="CL",
+        start_date=date(2026, 11, 10),
+        end_date=date(2026, 11, 10),
+        purpose="Medical checkup",
+        substitute_id=102,
+    )
+    # Substitute accepts
+    sub_task = respond_substitute(substitute_id=102, request_id=req.id, action="accept", remarks="Will cover lectures")
+    assert sub_task.status == "accepted"
+    req.refresh_from_db()
+    assert req.status == "under_review"
+
+    # Unit head approves
+    review_leave_request(reviewer_id=200, request_id=req.id, action="approve", reason="Approved by HOD")
+    req.refresh_from_db()
+    assert req.status == "sanctioned"
+
+    # Verify balance was deducted
+    applicant_balance.refresh_from_db()
+    assert applicant_balance.balance == Decimal("7.00")
+    assert applicant_balance.availed == Decimal("1.00")
+
+@pytest.mark.django_db
+def test_withdraw_pending_request(applicant_balance):
+    req = apply_for_leave(
+        user_id=101,
+        category="CL",
+        start_date=date(2026, 11, 12),
+        end_date=date(2026, 11, 12),
+        purpose="Personal",
+    )
+    withdrawn = withdraw_leave_request(user_id=101, request_id=req.id)
+    assert withdrawn.status == "withdrawn"
+
+@pytest.mark.django_db
+def test_cancel_approved_leave_restores_balance(applicant_balance):
+    req = apply_for_leave(
+        user_id=101,
+        category="CL",
+        start_date=date(2026, 12, 1),
+        end_date=date(2026, 12, 1),
+        purpose="Conference",
+    )
+    review_leave_request(reviewer_id=200, request_id=req.id, action="approve")
+    applicant_balance.refresh_from_db()
+    assert applicant_balance.balance == Decimal("7.00")
+
+    # Cancel before start date
+    cancel_approved_leave(user_id=101, request_id=req.id, today_date=date(2026, 11, 20))
+    req.refresh_from_db()
+    assert req.status == "cancelled"
+
+    # Balance restored
+    applicant_balance.refresh_from_db()
+    assert applicant_balance.balance == Decimal("8.00")
+    assert applicant_balance.availed == Decimal("0.00")
